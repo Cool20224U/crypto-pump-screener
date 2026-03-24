@@ -208,7 +208,7 @@ with tab1:
     st.subheader("Live Early Pump Signals (Auto-refresh every 1 min)")
     st.caption(f"🕒 Last scan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Dubai time | Min RVOL: {MIN_RVOL}")
 
-        with st.spinner("Scanning top 300 coins..."):
+    with st.spinner("Scanning top 300 coins..."):
         df_signals, top5, df_partials = scan_coins()
 
     if not df_signals.empty:
