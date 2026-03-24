@@ -104,25 +104,31 @@ def calculate_pump_score(df_tech, row):
 
 def scan_coins():
     coins = get_top_300()
+    if coins.empty:
+        return pd.DataFrame(), [], pd.DataFrame()
+
     signals = []
-    partial_signals = []
+    partials = []
 
     for _, coin in coins.iterrows():
         symbol = coin['symbol'].upper()
-        if coin.get('total_volume', 0) < 5_000_000 or coin.get('price_change_percentage_24h', 0) > 15:
+        # Looser volume & 24h gain filter for testing
+        if coin.get('total_volume', 0) < 3_000_000 or coin.get('price_change_percentage_24h', 0) > 35:
             continue
 
         try:
             ohlcv = spot.fetch_ohlcv(f"{symbol}/USDT", '15m', limit=100)
             df = pd.DataFrame(ohlcv, columns=['ts', 'open', 'high', 'low', 'close', 'volume'])
+            
             df['ema9'] = ta.ema(df['close'], 9)
             df['ema21'] = ta.ema(df['close'], 21)
             df['rsi'] = ta.rsi(df['close'])
             macd = ta.macd(df['close'])
             df = pd.concat([df, macd], axis=1)
+            
             try:
-                st_ = ta.supertrend(df['high'], df['low'], df['close'])
-                df['supertrend'] = st_['SUPERT_7_3.0']
+                st = ta.supertrend(df['high'], df['low'], df['close'])
+                df['supertrend'] = st['SUPERT_7_3.0']
             except:
                 df['supertrend'] = df['close']
 
@@ -132,18 +138,14 @@ def scan_coins():
             ema_cross = (df['ema9'].iloc[-1] > df['ema21'].iloc[-1]) and (df['ema9'].iloc[-2] <= df['ema21'].iloc[-2])
             macd_bull = (df['MACD_12_26_9'].iloc[-1] > df['MACDs_12_26_9'].iloc[-1]) and (df['MACDh_12_26_9'].iloc[-1] > 0)
 
-            partial_reason = None
-            if ema_cross: partial_reason = "EMA9 crossed EMA21"
-            elif rvol >= MIN_RVOL: partial_reason = f"High RVOL {rvol:.1f}x"
-            elif macd_bull: partial_reason = "MACD bullish"
-
-            if (ema_cross or rvol >= MIN_RVOL) and macd_bull and coin.get('price_change_percentage_24h', 0) <= 15:
+            # Full signal
+            if (ema_cross or rvol >= MIN_RVOL) and macd_bull:
                 pump_score = calculate_pump_score(df, coin)
                 futures_m = get_futures_momentum(symbol)
                 social = get_social_spike(symbol)
 
                 signal = {
-                    "Rank": int(coin.get('market_cap_rank', '?')),
+                    "Rank": int(coin.get('market_cap_rank', 999)),
                     "Coin": symbol,
                     "Price": f"${coin['current_price']:.6f}",
                     "1h %": round(coin.get('price_change_percentage_1h', 0), 2),
@@ -151,50 +153,52 @@ def scan_coins():
                     "RVOL": round(rvol, 1),
                     "Pump Score": pump_score,
                     "Funding %": futures_m['funding_rate'],
-                    "Social": social,
-                    "Link": f"https://www.coingecko.com/en/coins/{coin['id']}",
-                    "Target +20%": f"${coin['current_price']*1.2:.6f}",
-                    "Stop -10%": f"${coin['current_price']*0.9:.6f}",
-                    "Potential Profit": "+20%"
+                    "OI": f"{futures_m['oi']/1_000_000:.1f}M" if futures_m['oi'] else "N/A",
+                    "Social 24h": social,
+                    "Link": f"https://www.coingecko.com/en/coins/{coin['id']}"
                 }
                 signals.append(signal)
 
-                # Persistent history
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                hist = signal.copy()
-                hist["Timestamp"] = timestamp
-                st.session_state.signal_history.insert(0, hist)
-                st.session_state.signal_history = st.session_state.signal_history[:5]
-                save_history()
-
-                if pump_score > 40 and (symbol not in alerted or time.time() - alerted.get(symbol, 0) > COOLDOWN_HOURS*3600):
-                    msg = f"🚀 EARLY PUMP {symbol} | Score {pump_score} | RVOL {rvol:.1f}x"
+                # Telegram + desktop alert (lowered threshold for testing)
+                if pump_score >= 40 and (symbol not in alerted or time.time() - alerted.get(symbol, 0) > COOLDOWN_HOURS * 3600):
+                    msg = f"🚀 EARLY PUMP {symbol} (Rank #{signal['Rank']}) | Score {pump_score} | RVOL {rvol:.1f}x | 24h {signal['24h %']}%"
                     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
-                    notification.notify(title="Early Pump Detected!", message=msg)
+                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                                      data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+                    notification.notify(title="🚀 Early Pump Detected!", message=msg[:120])
                     alerted[symbol] = time.time()
 
-            elif partial_reason:
-                partial_signals.append({
-                    "Rank": int(coin.get('market_cap_rank', '?')),
+            # Partial / Near-Miss logic (this is what catches the coins you want)
+            partial_score = 0
+            if rvol >= MIN_RVOL - 0.4: partial_score += 1
+            if macd_bull: partial_score += 1
+            if ema_cross: partial_score += 1
+
+            if partial_score >= 2 and coin.get('price_change_percentage_24h', 0) < 35:
+                partials.append({
                     "Coin": symbol,
-                    "Price": f"${coin['current_price']:.6f}",
-                    "24h %": round(coin.get('price_change_percentage_24h', 0), 2),
+                    "Rank": int(coin.get('market_cap_rank', 999)),
                     "RVOL": round(rvol, 1),
-                    "Partial Reason": partial_reason,
-                    "Social": get_social_spike(symbol),
+                    "1h %": round(coin.get('price_change_percentage_1h', 0), 2),
+                    "24h %": round(coin.get('price_change_percentage_24h', 0), 2),
+                    "Partial Score": partial_score,
                     "Link": f"https://www.coingecko.com/en/coins/{coin['id']}"
                 })
 
-        except:
+        except Exception:
             continue
 
+    # Build DataFrames safely
     df_signals = pd.DataFrame(signals)
     if not df_signals.empty and "Pump Score" in df_signals.columns:
         df_signals = df_signals.sort_values("Pump Score", ascending=False)
 
-    return df_signals, signals[:5], partial_signals[:3]
+    df_partials = pd.DataFrame(partials)
+    if not df_partials.empty:
+        df_partials = df_partials.sort_values("Partial Score", ascending=False).head(12)
 
+    return df_signals, signals[:5], df_partials
+    
 # Portfolio functions (unchanged from previous version — omitted for brevity, copy from your working script if needed)
 
 # TABS
@@ -204,15 +208,24 @@ with tab1:
     st.subheader("Live Early Pump Signals (Auto-refresh every 1 min)")
     st.caption(f"🕒 Last scan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Dubai time | Min RVOL: {MIN_RVOL}")
 
-    with st.spinner("Scanning top 300 coins + futures + social..."):
+        with st.spinner("Scanning top 300 coins..."):
         df_signals, top5, df_partials = scan_coins()
 
     if not df_signals.empty:
         st.dataframe(df_signals, use_container_width=True, hide_index=True,
                      column_config={"Link": st.column_config.LinkColumn("Link")})
-        st.success(f"Found {len(df_signals)} strong signals!")
+        st.success(f"✅ Found {len(df_signals)} strong early signals!")
     else:
-        st.info("No full strong early signals right now — market is quiet")
+        st.info("No full strong signals right now")
+
+    # Partial signals (this should now work without error)
+    st.subheader("🔍 Partial / Near-Miss Signals (High RVOL or MACD Bullish)")
+    if not df_partials.empty:
+        st.dataframe(df_partials, use_container_width=True, hide_index=True,
+                     column_config={"Link": st.column_config.LinkColumn("Link")})
+        st.caption("These coins almost qualified — good for manual watchlist")
+    else:
+        st.info("No near-misses detected this scan")
 
     # === NEW: Partial / Near-Miss Section ===
     st.subheader("🔍 Partial / Near-Miss Signals (High RVOL or MACD Bullish)")
