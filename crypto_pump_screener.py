@@ -231,7 +231,9 @@ with tab1:
             with col1:
                 st.write(f"**{sig['Coin']}**")
             with col2:
-                st.info(sig.get('Social 24h', 'N/A'))with tab2:
+                st.info(sig.get('Social 24h', 'N/A'))
+                
+with tab2:
     # Portfolio Tracker (copy your previous working portfolio code here)
     st.subheader("Portfolio Tracker")
     # ... (same as your v3 version)
