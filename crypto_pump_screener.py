@@ -231,13 +231,25 @@ with tab1:
             with col2:
                 st.info(sig.get('Social 24h', 'N/A'))
     
+        # === HOT MOVERS WATCHLIST ===
     st.subheader("🔥 Hot Movers Watchlist (Top 15 by 24h % in Top 300)")
-    hot_movers = coins.sort_values('price_change_percentage_24h', ascending=False).head(15)
-    if not hot_movers.empty:
-        display_hot = hot_movers[['symbol', 'current_price', 'price_change_percentage_1h', 'price_change_percentage_24h', 'total_volume']].copy()
-        display_hot.columns = ['Coin', 'Price', '1h %', '24h %', 'Volume']
+    
+    coins = get_top_300()  # Fetch fresh data here
+    
+    if not coins.empty:
+        hot_movers = coins.sort_values('price_change_percentage_24h', ascending=False).head(15).copy()
+        
+        display_hot = hot_movers[['symbol', 'current_price', 'price_change_percentage_1h', 
+                                  'price_change_percentage_24h', 'total_volume']].copy()
+        
+        display_hot.columns = ['Coin', 'Price ($)', '1h %', '24h %', '24h Volume']
         display_hot['Coin'] = display_hot['Coin'].str.upper()
+        display_hot['24h Volume'] = display_hot['24h Volume'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
+        
         st.dataframe(display_hot, use_container_width=True, hide_index=True)
+        st.caption("These are the hottest movers right now — great for manual monitoring")
+    else:
+        st.info("Could not load hot movers data")
         
 with tab2:
     # Portfolio Tracker (add your previous working portfolio code here if needed)
