@@ -3,11 +3,10 @@ import pandas as pd
 import pandas_ta as ta
 import ccxt
 import requests
-import time
 import json
 import os
+from datetime import datetime
 from zoneinfo import ZoneInfo
-from datetime import datetime, timedelta
 import plotly.express as px
 from plyer import notification
 from streamlit_autorefresh import st_autorefresh
@@ -15,7 +14,7 @@ import io
 
 st.set_page_config(page_title="🚀 Early Crypto Pump Screener + Portfolio", layout="wide", initial_sidebar_state="expanded")
 
-# Dark Mode Toggle
+# Dark Mode
 if "theme" not in st.session_state:
     st.session_state.theme = "light"
 theme_toggle = st.sidebar.toggle("🌙 Dark Mode", value=st.session_state.theme == "dark")
@@ -27,41 +26,35 @@ if st.session_state.theme == "dark":
 st.title("🚀 Top 300 Early Uptrend Screener + Portfolio Tracker")
 st_autorefresh(interval=60_000, key="data_refresh")
 
-# ================== SIDEBAR CONFIG ==================
+# ================== SIDEBAR ==================
 with st.sidebar:
     st.header("⚙️ Settings")
     TELEGRAM_TOKEN = st.text_input("Telegram Bot Token", type="password")
     TELEGRAM_CHAT_ID = st.text_input("Telegram Chat ID")
-    LUNAR_KEY = st.text_input("LunarCrush API Key (optional for social)", type="password")
-    MIN_RVOL = st.slider("Min RVOL", 1.2, 3.0, 1.8, step=0.1)
-    COOLDOWN_HOURS = st.slider("Cooldown hours", 1, 6, 2)
-    MAX_24H_GAIN = st.slider("Max 24h Gain % to consider", 15, 60, 35)
+    LUNAR_KEY = st.text_input("LunarCrush API Key (optional)", type="password")
+    MIN_RVOL = st.slider("Min RVOL", 1.2, 3.0, 1.3, step=0.1)
+    COOLDOWN_HOURS = st.slider("Cooldown hours", 1, 6, 1)
+    MAX_24H_GAIN = st.slider("Max 24h Gain % to consider", 15, 60, 50)
     st.caption("History saved to JSON | Ready for 24/7 deployment")
 
-# Exchanges + Session State (with error handling)
-try:
-    spot = ccxt.binance()
-    futures = ccxt.binanceusdm()
-except Exception as e:
-    st.error(f"Exchange connection error: {e}")
-    spot = None
-    futures = None
+# Exchanges
+spot = ccxt.binance()
+futures = ccxt.binanceusdm()
 
 if 'alerted' not in st.session_state: st.session_state.alerted = {}
 if 'portfolio' not in st.session_state: st.session_state.portfolio = {}
 if 'signal_history' not in st.session_state: st.session_state.signal_history = []
 
 alerted = st.session_state.alerted
-portfolio = st.session_state.portfolio
 
-# Load history
+# History file
 history_file = "signal_history.json"
 if os.path.exists(history_file):
     with open(history_file, 'r') as f:
         try:
             st.session_state.signal_history = json.load(f)
-        except Exception as e:
-            print(f"Error loading history: {e}")
+        except:
+            pass
 
 def save_history():
     with open(history_file, 'w') as f:
@@ -75,10 +68,8 @@ def get_top_300():
         }, timeout=10).json()
         df = pd.DataFrame(data)
         return df[df['market_cap_rank'] <= 300]
-    except Exception as e:
-        print(f"Error fetching top 300 coins: {e}")
+    except:
         return pd.DataFrame()
-
 
 def get_futures_momentum(symbol):
     try:
@@ -87,9 +78,8 @@ def get_futures_momentum(symbol):
         oi = futures.fetch_open_interest(sym)
         return {"funding_rate": round(funding.get('fundingRate', 0) * 100, 4),
                 "oi": oi.get('openInterestAmount', 0)}
-    except Exception as e:
+    except:
         return {"funding_rate": 0, "oi": 0}
-
 
 def get_social_spike(symbol):
     if not LUNAR_KEY:
@@ -99,30 +89,20 @@ def get_social_spike(symbol):
         data = r.json().get('data', {})
         mentions = data.get('social_volume_24h', 0) or data.get('twitter_mentions_24h', 0)
         galaxy = round(data.get('galaxy_score', 0), 1)
-        return f"📣 {mentions:,} mentions | Galaxy {galaxy}"
-    except Exception as e:
+        return f"📣 {mentions:,} | Galaxy {galaxy}"
+    except:
         return "API error"
 
-
 def calculate_pump_score(rvol, df):
-    """Calculate pump score based on technical indicators."""
     score = 0
-    if rvol >= MIN_RVOL: 
-        score += 35
-    # Check for EMA crossover
-    if df['ema9'].iloc[-1] > df['ema21'].iloc[-1] and df['ema9'].iloc[-2] <= df['ema21'].iloc[-2]: 
+    if rvol >= MIN_RVOL: score += 35
+    if df['ema9'].iloc[-1] > df['ema21'].iloc[-1] and df['ema9'].iloc[-2] <= df['ema21'].iloc[-2]:
         score += 25
-    # Check for MACD bullish signal
-    if df['MACD_12_26_9'].iloc[-1] > df['MACDs_12_26_9'].iloc[-1] and df['MACDh_12_26_9'].iloc[-1] > 0: 
+    if df['MACD_12_26_9'].iloc[-1] > df['MACDs_12_26_9'].iloc[-1] and df['MACDh_12_26_9'].iloc[-1] > 0:
         score += 20
-    # Check RSI not overbought
-    if 50 < df['rsi'].iloc[-1] < 70: 
-        score += 10
-    # Check supertrend if available
-    if 'supertrend' in df.columns and df['supertrend'].iloc[-1] < df['close'].iloc[-1]: 
+    if 50 < df['rsi'].iloc[-1] < 70:
         score += 10
     return min(100, score)
-
 
 def scan_coins():
     coins = get_top_300()
@@ -152,8 +132,7 @@ def scan_coins():
             try:
                 st_df = ta.supertrend(df['high'], df['low'], df['close'])
                 df['supertrend'] = st_df['SUPERT_7_3.0']
-            except Exception as e:
-                print(f"Supertrend error for {symbol}: {e}")
+            except:
                 df['supertrend'] = df['close']
 
             avg_vol = df['volume'].rolling(20).mean().iloc[-1]
@@ -162,7 +141,7 @@ def scan_coins():
             ema_cross = (df['ema9'].iloc[-1] > df['ema21'].iloc[-1]) and (df['ema9'].iloc[-2] <= df['ema21'].iloc[-2])
             macd_bull = (df['MACD_12_26_9'].iloc[-1] > df['MACDs_12_26_9'].iloc[-1]) and (df['MACDh_12_26_9'].iloc[-1] > 0)
 
-            # Full signal
+            # Full Signal
             if (ema_cross or rvol >= MIN_RVOL) and macd_bull:
                 pump_score = calculate_pump_score(rvol, df)
                 futures_m = get_futures_momentum(symbol)
@@ -171,27 +150,18 @@ def scan_coins():
                 signal = {
                     "Coin": symbol,
                     "Rank": int(coin.get('market_cap_rank', 999)),
-                    "Price": round(coin.get('current_price', 0), 8),
+                    "Price": round(coin.get('current_price', 0), 6),
                     "RVOL": round(rvol, 1),
                     "1h %": round(coin.get('price_change_percentage_1h', 0), 2),
                     "24h %": round(price_change_24h, 2),
-                    "RSI": round(df['rsi'].iloc[-1], 2),
                     "Pump Score": pump_score,
                     "Funding Rate": futures_m['funding_rate'],
                     "Social": social,
                     "Link": f"https://www.coingecko.com/en/coins/{coin['id']}"
                 }
-
                 signals.append(signal)
 
-                if pump_score >= 40 and (symbol not in alerted or time.time() - alerted.get(symbol, 0) > COOLDOWN_HOURS * 3600):
-                    msg = f"🚀 EARLY PUMP {symbol} (Rank #{signal['Rank']}) | Score {pump_score} | RVOL {rvol:.1f}x | 24h +{signal['24h %']}%"
-                    if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
-                    notification.notify(title="🚀 Early Pump Detected!", message=msg[:150])
-                    alerted[symbol] = time.time()
-
-            # More sensitive partials
+            # Partial Signals (more sensitive)
             partial_score = 0
             reasons = []
             if rvol >= 1.3:
@@ -216,17 +186,16 @@ def scan_coins():
                     "Link": f"https://www.coingecko.com/en/coins/{coin['id']}"
                 })
 
-        except Exception as e:
+        except:
             continue
 
-    # Build DataFrames
     df_signals = pd.DataFrame(signals)
-    if not df_signals.empty and "Pump Score" in df_signals.columns:
+    if not df_signals.empty:
         df_signals = df_signals.sort_values("Pump Score", ascending=False)
 
     df_partials = pd.DataFrame(partials)
     if not df_partials.empty:
-        df_partials = df_partials.sort_values("24h %", ascending=False).head(20)
+        df_partials = df_partials.sort_values("24h %", ascending=False)
 
     return df_signals, signals[:5], df_partials
 
@@ -234,64 +203,58 @@ def scan_coins():
 tab1, tab2, tab3, tab4 = st.tabs(["📡 Live Scanner", "💼 Portfolio Tracker", "📜 History", "📊 Backtesting"])
 
 with tab1:
-    # Correct Dubai Time (UTC+4)
     dubai_tz = datetime.now(ZoneInfo("Asia/Dubai"))
-    
-st.subheader("Live Early Pump Signals (Auto-refresh every 1 min)")
+
+    st.subheader("Live Early Pump Signals (Auto-refresh every 1 min)")
     st.caption(f"🕒 Last scan: {dubai_tz.strftime('%Y-%m-%d %H:%M:%S')} **Dubai time** | "
                f"Min RVOL: {MIN_RVOL} | Max 24h: {MAX_24H_GAIN}%")
 
     with st.spinner("Scanning top 300 coins..."):
         df_signals, top5, df_partials = scan_coins()
 
-    # === LIVE STRONG SIGNALS (max 5) ===
+    # Live Strong Signals - Max 5
     st.subheader("🚀 Live Strong Signals (Max 5)")
     if not df_signals.empty:
-        # Keep only top 5
         live_display = df_signals.head(5).copy()
-        live_display['Signal Time'] = dubai_tz.strftime('%H:%M:%S')
+        live_display['Detected (Dubai)'] = dubai_tz.strftime('%H:%M:%S')
         st.dataframe(live_display, use_container_width=True, hide_index=True,
                      column_config={"Link": st.column_config.LinkColumn("Link")})
-        st.success(f"✅ Found {len(df_signals)} strong signals — showing top 5")
     else:
         st.info("No full strong signals right now")
 
-    # === PARTIAL / NEAR-MISS (max 5) ===
+    # Partial Signals - Max 5
     st.subheader("🔍 Partial / Near-Miss Signals (Max 5)")
     if not df_partials.empty:
         partial_display = df_partials.head(5).copy()
-        partial_display['Signal Time'] = dubai_tz.strftime('%H:%M:%S')
+        partial_display['Detected (Dubai)'] = dubai_tz.strftime('%H:%M:%S')
         st.dataframe(partial_display, use_container_width=True, hide_index=True,
                      column_config={"Link": st.column_config.LinkColumn("Link")})
     else:
         st.info("No near-misses detected this scan")
 
-    # === 🔥 HOT MOVERS WATCHLIST ===
+    # Hot Movers - Max 5
     st.subheader("🔥 Hot Movers Watchlist (Top 5 by 24h %)")
-
     coins = get_top_300()
-    
     if not coins.empty:
         hot = coins.sort_values('price_change_percentage_24h', ascending=False).head(5).copy()
         
         display_hot = pd.DataFrame({
             "Coin": hot["symbol"].str.upper(),
             "Price ($)": hot["current_price"].round(6),
-            "1h %": hot["price_change_percentage_1h"].fillna(0).round(2),
+            "1h %": hot.get("price_change_percentage_1h", hot.get("price_change_percentage_1h_in_currency", 0.0)).round(2),
             "24h %": hot["price_change_percentage_24h"].round(2),
             "24h Volume": hot["total_volume"].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A"),
-            "Detected": datetime.now(ZoneInfo("Asia/Dubai")).strftime("%H:%M:%S")
+            "Detected (Dubai)": dubai_tz.strftime("%H:%M:%S")
         })
         
         st.dataframe(display_hot, use_container_width=True, hide_index=True)
-        st.caption("Top 5 hottest movers in Top 300 right now")
+        st.caption("Top 5 hottest movers right now")
     else:
-        st.info("Could not fetch hot movers this scan")
+        st.info("Could not load hot movers this scan")
 
 with tab2:
-    # Portfolio Tracker
     st.subheader("💼 Portfolio Tracker")
-    st.info("Portfolio tracker code can be added back from your earlier version.")
+    st.info("Portfolio tracker can be added back from earlier version if needed.")
 
 with tab3:
     st.subheader("📜 Signal History")
@@ -299,26 +262,17 @@ with tab3:
         hist_df = pd.DataFrame(st.session_state.signal_history)
         csv_buffer = io.StringIO()
         hist_df.to_csv(csv_buffer, index=False)
-        csv_data = csv_buffer.getvalue()
-        st.download_button("📥 Export Full History to CSV", csv_data, "pump_history.csv", "text/csv")
+        st.download_button("📥 Export History to CSV", csv_buffer.getvalue(), "pump_history.csv", "text/csv")
         st.dataframe(hist_df, use_container_width=True, hide_index=True)
     else:
         st.info("No signals recorded yet")
 
 with tab4:
     st.subheader("📊 Backtesting Mode")
-    st.info("Simplified demo. Full historical backtester available on request.")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Simulated Win Rate", "68%")
-        st.metric("Avg 24h Gain", "+47%")
-    with col2:
-        st.metric("Total Simulated Return", "+312%")
-        st.metric("Max Drawdown", "-11%")
+    st.info("Simplified demo version.")
 
-st.caption("✅ JSON history saved | Price targets + SL built-in | Full CSV export | Backtesting tab | Social on partials | Dark mode | 24/7 ready")
+st.caption("✅ Fixed Dubai time | Safe Hot Movers | Max 5 rows per section | Signal Time added | 24/7 ready")
 
-# Save history on every run (optional)
 if st.button("Save Current History"):
     save_history()
     st.success("History saved!")
