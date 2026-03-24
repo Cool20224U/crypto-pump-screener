@@ -202,44 +202,36 @@ tab1, tab2, tab3, tab4 = st.tabs(["📡 Live Scanner", "💼 Portfolio Tracker",
 
 with tab1:
     st.subheader("Live Early Pump Signals (Auto-refresh every 1 min)")
-    with st.spinner("Scanning..."):
-        df_signals, top5, partials = scan_coins()
+    st.caption(f"🕒 Last scan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Dubai time | Min RVOL: {MIN_RVOL}")
+
+    with st.spinner("Scanning top 300 coins + futures + social..."):
+        df_signals, top5, df_partials = scan_coins()
 
     if not df_signals.empty:
-        st.dataframe(df_signals.style.format({"Pump Score": "{:.0f}"}), use_container_width=True, hide_index=True, column_config={"Link": st.column_config.LinkColumn("Link")})
-        st.success(f"Found {len(df_signals)} full signals!")
+        st.dataframe(df_signals, use_container_width=True, hide_index=True,
+                     column_config={"Link": st.column_config.LinkColumn("Link")})
+        st.success(f"Found {len(df_signals)} strong signals!")
     else:
-        st.info("No full strong early signals right now")
+        st.info("No full strong early signals right now — market is quiet")
 
-    # Last 5 Persistent Signals
-    st.subheader("📜 Last 5 Pump Signals (with date & time)")
-    if st.session_state.signal_history:
-        hist_df = pd.DataFrame(st.session_state.signal_history)
-        st.dataframe(hist_df, use_container_width=True, hide_index=True, column_config={"Link": st.column_config.LinkColumn("Link")})
-    else:
-        st.info("No signals yet")
-
-    # Partial signals
-    if partials:
-        st.subheader("Near-Miss / Partial Momentum Coins")
-        st.dataframe(pd.DataFrame(partials), use_container_width=True, hide_index=True, column_config={"Link": st.column_config.LinkColumn("Link")})
-    
+    # === NEW: Partial / Near-Miss Section ===
     st.subheader("🔍 Partial / Near-Miss Signals (High RVOL or MACD Bullish)")
-    
-    # Collect partials inside scan_coins() loop (add this logic where you calculate rvol, ema_cross, macd_bull)
-    # Example addition:
-    # partial_score = 0
-    # if rvol >= 1.2: partial_score += 1
-    # if macd_bull: partial_score += 1
-    # if ema_cross: partial_score += 1
-    # if partial_score >= 2 and coin.get('price_change_percentage_24h', 0) < 35:
-    #     partials.append({...})
-    
     if not df_partials.empty:
-        st.dataframe(df_partials, use_container_width=True)
+        st.dataframe(df_partials, use_container_width=True, hide_index=True,
+                     column_config={"Link": st.column_config.LinkColumn("Link")})
+        st.caption("These are coins that almost qualified — great for manual watchlist")
     else:
-        st.info("No near-misses detected this scan")
-with tab2:
+        st.info("No near-misses this scan")
+
+    # Social ticker for top 5
+    if top5:
+        st.subheader("Social Ticker – Top 5")
+        for sig in top5:
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.write(f"**{sig['Coin']}**")
+            with col2:
+                st.info(sig.get('Social 24h', 'N/A'))with tab2:
     # Portfolio Tracker (copy your previous working portfolio code here)
     st.subheader("Portfolio Tracker")
     # ... (same as your v3 version)
