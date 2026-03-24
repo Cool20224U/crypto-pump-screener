@@ -6,7 +6,7 @@ import requests
 import time
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.express as px
 from plyer import notification
 from streamlit_autorefresh import st_autorefresh
@@ -200,37 +200,42 @@ tab1, tab2, tab3, tab4 = st.tabs(["📡 Live Scanner", "💼 Portfolio Tracker",
 
 with tab1:
     # Correct Dubai Time (UTC+4)
-    dubai_time = datetime.now() + timedelta(hours=4)
+    dubai_tz = datetime.now() + timedelta(hours=4)
     
     st.subheader("Live Early Pump Signals (Auto-refresh every 1 min)")
-    st.caption(f"🕒 Last scan: {dubai_time.strftime('%Y-%m-%d %H:%M:%S')} **Dubai time** | "
+    st.caption(f"🕒 Last scan: {dubai_tz.strftime('%Y-%m-%d %H:%M:%S')} **Dubai time** | "
                f"Min RVOL: {MIN_RVOL} | Max 24h: {MAX_24H_GAIN}%")
 
     with st.spinner("Scanning top 300 coins..."):
         df_signals, top5, df_partials = scan_coins()
 
+    # === LIVE STRONG SIGNALS (max 5) ===
+    st.subheader("🚀 Live Strong Signals (Max 5)")
     if not df_signals.empty:
-        st.dataframe(df_signals, use_container_width=True, hide_index=True,
+        # Keep only top 5
+        live_display = df_signals.head(5).copy()
+        live_display['Signal Time'] = dubai_tz.strftime('%H:%M:%S')
+        st.dataframe(live_display, use_container_width=True, hide_index=True,
                      column_config={"Link": st.column_config.LinkColumn("Link")})
-        st.success(f"✅ Found {len(df_signals)} strong early signals!")
+        st.success(f"✅ Found {len(df_signals)} strong signals — showing top 5")
     else:
         st.info("No full strong signals right now")
 
-    # Partial / Near-Miss Signals
-    st.subheader("🔍 Partial / Near-Miss Signals (High RVOL or MACD Bullish)")
+    # === PARTIAL / NEAR-MISS (max 5) ===
+    st.subheader("🔍 Partial / Near-Miss Signals (Max 5)")
     if not df_partials.empty:
-        st.dataframe(df_partials, use_container_width=True, hide_index=True,
+        partial_display = df_partials.head(5).copy()
+        partial_display['Signal Time'] = dubai_tz.strftime('%H:%M:%S')
+        st.dataframe(partial_display, use_container_width=True, hide_index=True,
                      column_config={"Link": st.column_config.LinkColumn("Link")})
-        st.caption("These coins are showing early momentum — good for manual watchlist")
     else:
         st.info("No near-misses detected this scan")
 
-    # 🔥 HOT MOVERS WATCHLIST - SAFE VERSION
-    st.subheader("🔥 Hot Movers Watchlist (Top 15 by 24h % in Top 300)")
-    
+    # === HOT MOVERS (max 5) ===
+    st.subheader("🔥 Hot Movers Watchlist (Top 5 by 24h %)")
     coins = get_top_300()
     if not coins.empty:
-        hot_movers = coins.sort_values('price_change_percentage_24h', ascending=False).head(15).copy()
+        hot_movers = coins.sort_values('price_change_percentage_24h', ascending=False).head(5).copy()
         
         display_hot = pd.DataFrame({
             'Coin': hot_movers['symbol'].str.upper(),
@@ -238,23 +243,14 @@ with tab1:
             '1h %': hot_movers.get('price_change_percentage_1h', 
                                   hot_movers.get('price_change_percentage_1h_in_currency', 0)).round(2),
             '24h %': hot_movers['price_change_percentage_24h'].round(2),
-            '24h Volume': hot_movers['total_volume'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
+            '24h Volume': hot_movers['total_volume'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A"),
+            'Signal Time': dubai_tz.strftime('%H:%M:%S')
         })
         
         st.dataframe(display_hot, use_container_width=True, hide_index=True)
-        st.caption("These are the hottest movers right now — great for manual monitoring")
     else:
-        st.info("Could not load hot movers data this scan")
+        st.info("Could not load hot movers this scan")
 
-    # Social Ticker
-    if top5:
-        st.subheader("📣 Social Ticker – Top 5")
-        for sig in top5:
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                st.write(f"**{sig['Coin']}**")
-            with col2:
-                st.info(sig.get('Social 24h', 'N/A'))    
 with tab2:
     # Portfolio Tracker (add your previous working portfolio code here if needed)
     st.subheader("💼 Portfolio Tracker")
