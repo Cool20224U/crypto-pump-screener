@@ -109,7 +109,8 @@ def scan_coins():
 
     for _, coin in coins.iterrows():
         symbol = coin['symbol'].upper()
-        if coin.get('total_volume', 0) < 5_000_000: continue
+        if coin.get('total_volume', 0) < 5_000_000 or coin.get('price_change_percentage_24h', 0) > 15:
+            continue
 
         try:
             ohlcv = spot.fetch_ohlcv(f"{symbol}/USDT", '15m', limit=100)
@@ -166,7 +167,7 @@ def scan_coins():
                 st.session_state.signal_history = st.session_state.signal_history[:5]
                 save_history()
 
-                if pump_score > 60 and (symbol not in alerted or time.time() - alerted.get(symbol, 0) > COOLDOWN_HOURS*3600):
+                if pump_score > 40 and (symbol not in alerted or time.time() - alerted.get(symbol, 0) > COOLDOWN_HOURS*3600):
                     msg = f"🚀 EARLY PUMP {symbol} | Score {pump_score} | RVOL {rvol:.1f}x"
                     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
                         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
