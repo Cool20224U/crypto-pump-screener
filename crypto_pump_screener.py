@@ -6,7 +6,8 @@ import requests
 import time
 import json
 import os
-from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta   # (if not already there)
 import plotly.express as px
 from plyer import notification
 from streamlit_autorefresh import st_autorefresh
@@ -200,7 +201,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["📡 Live Scanner", "💼 Portfolio Tracker",
 
 with tab1:
     # Correct Dubai Time (UTC+4)
-    dubai_tz = datetime.now() + timedelta(hours=4)
+    dubai_tz = datetime.now(ZoneInfo("Asia/Dubai"))
     
     st.subheader("Live Early Pump Signals (Auto-refresh every 1 min)")
     st.caption(f"🕒 Last scan: {dubai_tz.strftime('%Y-%m-%d %H:%M:%S')} **Dubai time** | "
@@ -231,25 +232,28 @@ with tab1:
     else:
         st.info("No near-misses detected this scan")
 
-    # === HOT MOVERS (max 5) ===
+        # === 🔥 HOT MOVERS WATCHLIST (Safe & Final Version) ===
     st.subheader("🔥 Hot Movers Watchlist (Top 5 by 24h %)")
+
     coins = get_top_300()
+    
     if not coins.empty:
-        hot_movers = coins.sort_values('price_change_percentage_24h', ascending=False).head(5).copy()
+        hot = coins.sort_values('price_change_percentage_24h', ascending=False).head(5).copy()
         
         display_hot = pd.DataFrame({
-            'Coin': hot_movers['symbol'].str.upper(),
-            'Price ($)': hot_movers['current_price'].round(6),
-            '1h %': hot_movers.get('price_change_percentage_1h', 
-                                  hot_movers.get('price_change_percentage_1h_in_currency', 0)).round(2),
-            '24h %': hot_movers['price_change_percentage_24h'].round(2),
-            '24h Volume': hot_movers['total_volume'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A"),
-            'Signal Time': dubai_tz.strftime('%H:%M:%S')
+            "Coin": hot["symbol"].str.upper(),
+            "Price ($)": hot["current_price"].round(6),
+            "1h %": hot.get("price_change_percentage_1h", 
+                           hot.get("price_change_percentage_1h_in_currency", 0.0)).round(2),
+            "24h %": hot["price_change_percentage_24h"].round(2),
+            "24h Volume": hot["total_volume"].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A"),
+            "Detected": datetime.now(ZoneInfo("Asia/Dubai")).strftime("%H:%M:%S")
         })
         
         st.dataframe(display_hot, use_container_width=True, hide_index=True)
+        st.caption("Top 5 hottest movers in Top 300 right now")
     else:
-        st.info("Could not load hot movers this scan")
+        st.info("Could not fetch hot movers this scan")
 
 with tab2:
     # Portfolio Tracker (add your previous working portfolio code here if needed)
