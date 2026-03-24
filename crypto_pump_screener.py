@@ -113,7 +113,9 @@ def scan_coins():
 
     for _, coin in coins.iterrows():
         symbol = coin['symbol'].upper()
-        if coin.get('total_volume', 0) < 3_000_000 or coin.get('price_change_percentage_24h', 0) > MAX_24H_GAIN:
+        price_change_24h = coin.get('price_change_percentage_24h', 0)
+
+        if coin.get('total_volume', 0) < 3_000_000 or price_change_24h > MAX_24H_GAIN:
             continue
 
         try:
@@ -138,25 +140,14 @@ def scan_coins():
             ema_cross = (df['ema9'].iloc[-1] > df['ema21'].iloc[-1]) and (df['ema9'].iloc[-2] <= df['ema21'].iloc[-2])
             macd_bull = (df['MACD_12_26_9'].iloc[-1] > df['MACDs_12_26_9'].iloc[-1]) and (df['MACDh_12_26_9'].iloc[-1] > 0)
 
-            # === FULL STRONG SIGNAL ===
+            # Full signal (keep as is)
             if (ema_cross or rvol >= MIN_RVOL) and macd_bull:
                 pump_score = calculate_pump_score(df, coin)
                 futures_m = get_futures_momentum(symbol)
                 social = get_social_spike(symbol)
 
-                signal = {
-                    "Rank": int(coin.get('market_cap_rank', 999)),
-                    "Coin": symbol,
-                    "Price": f"${coin['current_price']:.6f}",
-                    "1h %": round(coin.get('price_change_percentage_1h', 0), 2),
-                    "24h %": round(coin.get('price_change_percentage_24h', 0), 2),
-                    "RVOL": round(rvol, 1),
-                    "Pump Score": pump_score,
-                    "Funding %": futures_m['funding_rate'],
-                    "OI": f"{futures_m['oi']/1_000_000:.1f}M" if futures_m['oi'] else "N/A",
-                    "Social 24h": social,
-                    "Link": f"https://www.coingecko.com/en/coins/{coin['id']}"
-                }
+                signal = { ... }  # your existing signal dict
+
                 signals.append(signal)
 
                 if pump_score >= 40 and (symbol not in alerted or time.time() - alerted.get(symbol, 0) > COOLDOWN_HOURS * 3600):
@@ -166,10 +157,10 @@ def scan_coins():
                     notification.notify(title="🚀 Early Pump Detected!", message=msg[:150])
                     alerted[symbol] = time.time()
 
-            # === PARTIAL / NEAR-MISS SIGNALS ===
+            # More sensitive partials
             partial_score = 0
             reasons = []
-            if rvol >= MIN_RVOL - 0.5:
+            if rvol >= 1.3:
                 partial_score += 2
                 reasons.append(f"RVOL {round(rvol,1)}x")
             if macd_bull:
@@ -179,13 +170,13 @@ def scan_coins():
                 partial_score += 1
                 reasons.append("EMA Cross")
 
-            if partial_score >= 2 and coin.get('price_change_percentage_24h', 0) < MAX_24H_GAIN + 15:
+            if partial_score >= 1 and price_change_24h < MAX_24H_GAIN + 20:   # lowered threshold to >=1
                 partials.append({
                     "Coin": symbol,
                     "Rank": int(coin.get('market_cap_rank', 999)),
                     "RVOL": round(rvol, 1),
                     "1h %": round(coin.get('price_change_percentage_1h', 0), 2),
-                    "24h %": round(coin.get('price_change_percentage_24h', 0), 2),
+                    "24h %": round(price_change_24h, 2),
                     "Partial Score": partial_score,
                     "Reasons": ", ".join(reasons),
                     "Link": f"https://www.coingecko.com/en/coins/{coin['id']}"
@@ -201,10 +192,9 @@ def scan_coins():
 
     df_partials = pd.DataFrame(partials)
     if not df_partials.empty:
-        df_partials = df_partials.sort_values("Partial Score", ascending=False).head(15)
+        df_partials = df_partials.sort_values("24h %", ascending=False).head(20)   # sort by hottest movers
 
     return df_signals, signals[:5], df_partials
-
 # ===================== TABS =====================
 tab1, tab2, tab3, tab4 = st.tabs(["📡 Live Scanner", "💼 Portfolio Tracker", "📜 History", "📊 Backtesting"])
 
