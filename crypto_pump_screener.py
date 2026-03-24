@@ -7,7 +7,7 @@ import time
 import json
 import os
 from zoneinfo import ZoneInfo
-from datetime import datetime, timedelta   # (if not already there)
+from datetime import datetime, timedelta
 import plotly.express as px
 from plyer import notification
 from streamlit_autorefresh import st_autorefresh
@@ -38,9 +38,14 @@ with st.sidebar:
     MAX_24H_GAIN = st.slider("Max 24h Gain % to consider", 15, 60, 35)
     st.caption("History saved to JSON | Ready for 24/7 deployment")
 
-# Exchanges + Session State
-spot = ccxt.binance()
-futures = ccxt.binanceusdm()
+# Exchanges + Session State (with error handling)
+try:
+    spot = ccxt.binance()
+    futures = ccxt.binanceusdm()
+except Exception as e:
+    st.error(f"Exchange connection error: {e}")
+    spot = None
+    futures = None
 
 if 'alerted' not in st.session_state: st.session_state.alerted = {}
 if 'portfolio' not in st.session_state: st.session_state.portfolio = {}
@@ -55,8 +60,8 @@ if os.path.exists(history_file):
     with open(history_file, 'r') as f:
         try:
             st.session_state.signal_history = json.load(f)
-        except:
-            pass
+        except Exception as e:
+            print(f"Error loading history: {e}")
 
 def save_history():
     with open(history_file, 'w') as f:
@@ -70,8 +75,10 @@ def get_top_300():
         }, timeout=10).json()
         df = pd.DataFrame(data)
         return df[df['market_cap_rank'] <= 300]
-    except:
+    except Exception as e:
+        print(f"Error fetching top 300 coins: {e}")
         return pd.DataFrame()
+
 
 def get_futures_momentum(symbol):
     try:
@@ -80,8 +87,9 @@ def get_futures_momentum(symbol):
         oi = futures.fetch_open_interest(sym)
         return {"funding_rate": round(funding.get('fundingRate', 0) * 100, 4),
                 "oi": oi.get('openInterestAmount', 0)}
-    except:
+    except Exception as e:
         return {"funding_rate": 0, "oi": 0}
+
 
 def get_social_spike(symbol):
     if not LUNAR_KEY:
@@ -92,17 +100,29 @@ def get_social_spike(symbol):
         mentions = data.get('social_volume_24h', 0) or data.get('twitter_mentions_24h', 0)
         galaxy = round(data.get('galaxy_score', 0), 1)
         return f"📣 {mentions:,} mentions | Galaxy {galaxy}"
-    except:
+    except Exception as e:
         return "API error"
 
-def calculate_pump_score(df_tech, row):
+
+def calculate_pump_score(rvol, df):
+    """Calculate pump score based on technical indicators."""
     score = 0
-    if df_tech['rvol'].iloc[-1] >= MIN_RVOL: score += 35
-    if df_tech.get('ema_cross', False): score += 25
-    if df_tech.get('macd_bull', False): score += 20
-    if 50 < df_tech['rsi'].iloc[-1] < 70: score += 10
-    if 'supertrend' in df_tech and df_tech['supertrend'].iloc[-1] < df_tech['close'].iloc[-1]: score += 10
+    if rvol >= MIN_RVOL: 
+        score += 35
+    # Check for EMA crossover
+    if df['ema9'].iloc[-1] > df['ema21'].iloc[-1] and df['ema9'].iloc[-2] <= df['ema21'].iloc[-2]: 
+        score += 25
+    # Check for MACD bullish signal
+    if df['MACD_12_26_9'].iloc[-1] > df['MACDs_12_26_9'].iloc[-1] and df['MACDh_12_26_9'].iloc[-1] > 0: 
+        score += 20
+    # Check RSI not overbought
+    if 50 < df['rsi'].iloc[-1] < 70: 
+        score += 10
+    # Check supertrend if available
+    if 'supertrend' in df.columns and df['supertrend'].iloc[-1] < df['close'].iloc[-1]: 
+        score += 10
     return min(100, score)
+
 
 def scan_coins():
     coins = get_top_300()
@@ -132,7 +152,8 @@ def scan_coins():
             try:
                 st_df = ta.supertrend(df['high'], df['low'], df['close'])
                 df['supertrend'] = st_df['SUPERT_7_3.0']
-            except:
+            except Exception as e:
+                print(f"Supertrend error for {symbol}: {e}")
                 df['supertrend'] = df['close']
 
             avg_vol = df['volume'].rolling(20).mean().iloc[-1]
@@ -141,13 +162,25 @@ def scan_coins():
             ema_cross = (df['ema9'].iloc[-1] > df['ema21'].iloc[-1]) and (df['ema9'].iloc[-2] <= df['ema21'].iloc[-2])
             macd_bull = (df['MACD_12_26_9'].iloc[-1] > df['MACDs_12_26_9'].iloc[-1]) and (df['MACDh_12_26_9'].iloc[-1] > 0)
 
-            # Full signal (keep as is)
+            # Full signal
             if (ema_cross or rvol >= MIN_RVOL) and macd_bull:
-                pump_score = calculate_pump_score(df, coin)
+                pump_score = calculate_pump_score(rvol, df)
                 futures_m = get_futures_momentum(symbol)
                 social = get_social_spike(symbol)
 
-                signal = { ... }  # your existing signal dict
+                signal = {
+                    "Coin": symbol,
+                    "Rank": int(coin.get('market_cap_rank', 999)),
+                    "Price": round(coin.get('current_price', 0), 8),
+                    "RVOL": round(rvol, 1),
+                    "1h %": round(coin.get('price_change_percentage_1h', 0), 2),
+                    "24h %": round(price_change_24h, 2),
+                    "RSI": round(df['rsi'].iloc[-1], 2),
+                    "Pump Score": pump_score,
+                    "Funding Rate": futures_m['funding_rate'],
+                    "Social": social,
+                    "Link": f"https://www.coingecko.com/en/coins/{coin['id']}"
+                }
 
                 signals.append(signal)
 
@@ -171,7 +204,7 @@ def scan_coins():
                 partial_score += 1
                 reasons.append("EMA Cross")
 
-            if partial_score >= 1 and price_change_24h < MAX_24H_GAIN + 20:   # lowered threshold to >=1
+            if partial_score >= 1 and price_change_24h < MAX_24H_GAIN + 20:
                 partials.append({
                     "Coin": symbol,
                     "Rank": int(coin.get('market_cap_rank', 999)),
@@ -183,7 +216,7 @@ def scan_coins():
                     "Link": f"https://www.coingecko.com/en/coins/{coin['id']}"
                 })
 
-        except Exception:
+        except Exception as e:
             continue
 
     # Build DataFrames
@@ -193,9 +226,10 @@ def scan_coins():
 
     df_partials = pd.DataFrame(partials)
     if not df_partials.empty:
-        df_partials = df_partials.sort_values("24h %", ascending=False).head(20)   # sort by hottest movers
+        df_partials = df_partials.sort_values("24h %", ascending=False).head(20)
 
     return df_signals, signals[:5], df_partials
+
 # ===================== TABS =====================
 tab1, tab2, tab3, tab4 = st.tabs(["📡 Live Scanner", "💼 Portfolio Tracker", "📜 History", "📊 Backtesting"])
 
@@ -203,7 +237,7 @@ with tab1:
     # Correct Dubai Time (UTC+4)
     dubai_tz = datetime.now(ZoneInfo("Asia/Dubai"))
     
-    st.subheader("Live Early Pump Signals (Auto-refresh every 1 min)")
+st.subheader("Live Early Pump Signals (Auto-refresh every 1 min)")
     st.caption(f"🕒 Last scan: {dubai_tz.strftime('%Y-%m-%d %H:%M:%S')} **Dubai time** | "
                f"Min RVOL: {MIN_RVOL} | Max 24h: {MAX_24H_GAIN}%")
 
@@ -232,7 +266,7 @@ with tab1:
     else:
         st.info("No near-misses detected this scan")
 
-        # === 🔥 HOT MOVERS WATCHLIST (Safe & Final Version) ===
+    # === 🔥 HOT MOVERS WATCHLIST ===
     st.subheader("🔥 Hot Movers Watchlist (Top 5 by 24h %)")
 
     coins = get_top_300()
@@ -243,8 +277,7 @@ with tab1:
         display_hot = pd.DataFrame({
             "Coin": hot["symbol"].str.upper(),
             "Price ($)": hot["current_price"].round(6),
-            "1h %": hot.get("price_change_percentage_1h", 
-                           hot.get("price_change_percentage_1h_in_currency", 0.0)).round(2),
+            "1h %": hot["price_change_percentage_1h"].fillna(0).round(2),
             "24h %": hot["price_change_percentage_24h"].round(2),
             "24h Volume": hot["total_volume"].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A"),
             "Detected": datetime.now(ZoneInfo("Asia/Dubai")).strftime("%H:%M:%S")
@@ -256,7 +289,7 @@ with tab1:
         st.info("Could not fetch hot movers this scan")
 
 with tab2:
-    # Portfolio Tracker (add your previous working portfolio code here if needed)
+    # Portfolio Tracker
     st.subheader("💼 Portfolio Tracker")
     st.info("Portfolio tracker code can be added back from your earlier version.")
 
@@ -266,7 +299,8 @@ with tab3:
         hist_df = pd.DataFrame(st.session_state.signal_history)
         csv_buffer = io.StringIO()
         hist_df.to_csv(csv_buffer, index=False)
-        st.download_button("📥 Export Full History to CSV", csv_buffer.getvalue(), "pump_history.csv", "text/csv")
+        csv_data = csv_buffer.getvalue()
+        st.download_button("📥 Export Full History to CSV", csv_data, "pump_history.csv", "text/csv")
         st.dataframe(hist_df, use_container_width=True, hide_index=True)
     else:
         st.info("No signals recorded yet")
