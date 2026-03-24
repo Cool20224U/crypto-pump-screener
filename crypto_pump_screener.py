@@ -223,7 +223,22 @@ with tab1:
     if partials:
         st.subheader("Near-Miss / Partial Momentum Coins")
         st.dataframe(pd.DataFrame(partials), use_container_width=True, hide_index=True, column_config={"Link": st.column_config.LinkColumn("Link")})
-
+    
+    st.subheader("🔍 Partial / Near-Miss Signals (High RVOL or MACD Bullish)")
+    
+    # Collect partials inside scan_coins() loop (add this logic where you calculate rvol, ema_cross, macd_bull)
+    # Example addition:
+    # partial_score = 0
+    # if rvol >= 1.2: partial_score += 1
+    # if macd_bull: partial_score += 1
+    # if ema_cross: partial_score += 1
+    # if partial_score >= 2 and coin.get('price_change_percentage_24h', 0) < 35:
+    #     partials.append({...})
+    
+    if not df_partials.empty:
+        st.dataframe(df_partials, use_container_width=True)
+    else:
+        st.info("No near-misses detected this scan")
 with tab2:
     # Portfolio Tracker (copy your previous working portfolio code here)
     st.subheader("Portfolio Tracker")
