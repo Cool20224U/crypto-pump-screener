@@ -199,10 +199,14 @@ def scan_coins():
 tab1, tab2, tab3, tab4 = st.tabs(["📡 Live Scanner", "💼 Portfolio Tracker", "📜 History", "📊 Backtesting"])
 
 with tab1:
+    # Correct Dubai Time (UTC+4)
+    dubai_time = datetime.now() + timedelta(hours=4)
+    
     st.subheader("Live Early Pump Signals (Auto-refresh every 1 min)")
-    st.caption(f"🕒 Last scan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} Dubai time | Min RVOL: {MIN_RVOL} | Max 24h: {MAX_24H_GAIN}%")
+    st.caption(f"🕒 Last scan: {dubai_time.strftime('%Y-%m-%d %H:%M:%S')} **Dubai time** | "
+               f"Min RVOL: {MIN_RVOL} | Max 24h: {MAX_24H_GAIN}%")
 
-    with st.spinner("Scanning top 300 coins + futures + social..."):
+    with st.spinner("Scanning top 300 coins..."):
         df_signals, top5, df_partials = scan_coins()
 
     if not df_signals.empty:
@@ -212,7 +216,7 @@ with tab1:
     else:
         st.info("No full strong signals right now")
 
-    # Partial Signals
+    # Partial / Near-Miss Signals
     st.subheader("🔍 Partial / Near-Miss Signals (High RVOL or MACD Bullish)")
     if not df_partials.empty:
         st.dataframe(df_partials, use_container_width=True, hide_index=True,
@@ -221,26 +225,13 @@ with tab1:
     else:
         st.info("No near-misses detected this scan")
 
-    # Social Ticker
-    if top5:
-        st.subheader("📣 Social Ticker – Top 5")
-        for sig in top5:
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                st.write(f"**{sig['Coin']}**")
-            with col2:
-                st.info(sig.get('Social 24h', 'N/A'))
-    
-            # === HOT MOVERS WATCHLIST (Ultra Safe Version) ===
+    # 🔥 HOT MOVERS WATCHLIST - SAFE VERSION
     st.subheader("🔥 Hot Movers Watchlist (Top 15 by 24h % in Top 300)")
     
     coins = get_top_300()
-    
     if not coins.empty:
-        # Sort by 24h gain
         hot_movers = coins.sort_values('price_change_percentage_24h', ascending=False).head(15).copy()
         
-        # Build display table safely
         display_hot = pd.DataFrame({
             'Coin': hot_movers['symbol'].str.upper(),
             'Price ($)': hot_movers['current_price'].round(6),
@@ -250,15 +241,20 @@ with tab1:
             '24h Volume': hot_movers['total_volume'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
         })
         
-        st.dataframe(
-            display_hot,
-            use_container_width=True,
-            hide_index=True
-        )
+        st.dataframe(display_hot, use_container_width=True, hide_index=True)
         st.caption("These are the hottest movers right now — great for manual monitoring")
     else:
         st.info("Could not load hot movers data this scan")
-    
+
+    # Social Ticker
+    if top5:
+        st.subheader("📣 Social Ticker – Top 5")
+        for sig in top5:
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.write(f"**{sig['Coin']}**")
+            with col2:
+                st.info(sig.get('Social 24h', 'N/A'))    
 with tab2:
     # Portfolio Tracker (add your previous working portfolio code here if needed)
     st.subheader("💼 Portfolio Tracker")
