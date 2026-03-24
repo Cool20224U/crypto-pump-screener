@@ -250,7 +250,7 @@ with tab1:
         st.caption("These are the hottest movers right now — great for manual monitoring")
     else:
         st.info("Could not load hot movers data")
-        
+    
 with tab2:
     # Portfolio Tracker (add your previous working portfolio code here if needed)
     st.subheader("💼 Portfolio Tracker")
