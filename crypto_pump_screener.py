@@ -231,28 +231,35 @@ with tab1:
             with col2:
                 st.info(sig.get('Social 24h', 'N/A'))
     
-        # === HOT MOVERS WATCHLIST (Safe version) ===
+        # === HOT MOVERS WATCHLIST (Safe & Reliable) ===
     st.subheader("🔥 Hot Movers Watchlist (Top 15 by 24h % in Top 300)")
     
-    coins = get_top_300()   # Fresh fetch
+    coins = get_top_300()
     
     if not coins.empty:
-        # Safe column selection with fallbacks
         hot_movers = coins.sort_values('price_change_percentage_24h', ascending=False).head(15).copy()
         
         display_hot = pd.DataFrame()
         display_hot['Coin'] = hot_movers['symbol'].str.upper()
-        display_hot['Price ($)'] = hot_movers['current_price']
-        display_hot['1h %'] = hot_movers.get('price_change_percentage_1h', 
-                                             hot_movers.get('price_change_percentage_1h_in_currency', 0))
-        display_hot['24h %'] = hot_movers['price_change_percentage_24h']
+        display_hot['Price ($)'] = hot_movers['current_price'].round(6)
+        
+        # Safe 1h % with fallback
+        if 'price_change_percentage_1h' in hot_movers.columns:
+            display_hot['1h %'] = hot_movers['price_change_percentage_1h'].round(2)
+        else:
+            display_hot['1h %'] = 0.0   # or NaN if you prefer
+        
+        display_hot['24h %'] = hot_movers['price_change_percentage_24h'].round(2)
         display_hot['24h Volume'] = hot_movers['total_volume'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
         
-        # Round percentages
-        display_hot['1h %'] = display_hot['1h %'].round(2)
-        display_hot['24h %'] = display_hot['24h %'].round(2)
-        
-        st.dataframe(display_hot, use_container_width=True, hide_index=True)
+        st.dataframe(
+            display_hot,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Link": st.column_config.LinkColumn("Link") if "Link" in display_hot.columns else None
+            }
+        )
         st.caption("These are the hottest movers right now — great for manual monitoring")
     else:
         st.info("Could not load hot movers data this scan")
