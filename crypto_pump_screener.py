@@ -206,4 +206,74 @@ with tab1:
     dubai_tz = datetime.now(ZoneInfo("Asia/Dubai"))
 
     st.subheader("Live Early Pump Signals (Auto-refresh every 1 min)")
-    st.caption(f"🕒 Last scan
+    st.caption(f"🕒 Last scan: {dubai_tz.strftime('%Y-%m-%d %H:%M:%S')} **Dubai time** | "
+               f"Min RVOL: {MIN_RVOL} | Max 24h: {MAX_24H_GAIN}%")
+
+    with st.spinner("Scanning top 300 coins..."):
+        df_signals, top5, df_partials = scan_coins()
+
+    # Live Strong Signals
+    st.subheader("🚀 Live Strong Signals (Max 5)")
+    if not df_signals.empty:
+        live_display = df_signals.head(5).copy()
+        live_display['Detected (Dubai)'] = dubai_tz.strftime('%H:%M:%S')
+        st.dataframe(live_display, use_container_width=True, hide_index=True,
+                     column_config={"Link": st.column_config.LinkColumn("Link")})
+    else:
+        st.info("No full strong signals right now")
+
+    # Partial Signals
+    st.subheader("🔍 Partial / Near-Miss Signals (Max 5)")
+    if not df_partials.empty:
+        partial_display = df_partials.head(5).copy()
+        partial_display['Detected (Dubai)'] = dubai_tz.strftime('%H:%M:%S')
+        st.dataframe(partial_display, use_container_width=True, hide_index=True,
+                     column_config={"Link": st.column_config.LinkColumn("Link")})
+    else:
+        st.info("No near-misses detected this scan")
+
+    # Hot Movers - Safe
+    st.subheader("🔥 Hot Movers Watchlist (Top 5 by 24h %)")
+    coins = get_top_300()
+    if not coins.empty:
+        hot = coins.sort_values('price_change_percentage_24h', ascending=False).head(5).copy()
+        
+        display_hot = pd.DataFrame({
+            "Coin": hot["symbol"].str.upper(),
+            "Price ($)": hot["current_price"].round(6),
+            "1h %": hot.get("price_change_percentage_1h", 
+                           hot.get("price_change_percentage_1h_in_currency", 0.0)).round(2),
+            "24h %": hot["price_change_percentage_24h"].round(2),
+            "24h Volume": hot["total_volume"].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A"),
+            "Detected (Dubai)": dubai_tz.strftime("%H:%M:%S")
+        })
+        
+        st.dataframe(display_hot, use_container_width=True, hide_index=True)
+        st.caption("Top 5 hottest movers right now")
+    else:
+        st.info("Could not load hot movers this scan")
+
+with tab2:
+    st.subheader("💼 Portfolio Tracker")
+    st.info("Portfolio tracker can be added later if needed.")
+
+with tab3:
+    st.subheader("📜 Signal History")
+    if st.session_state.signal_history:
+        hist_df = pd.DataFrame(st.session_state.signal_history)
+        csv_buffer = io.StringIO()
+        hist_df.to_csv(csv_buffer, index=False)
+        st.download_button("📥 Export History to CSV", csv_buffer.getvalue(), "pump_history.csv", "text/csv")
+        st.dataframe(hist_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No signals recorded yet")
+
+with tab4:
+    st.subheader("📊 Backtesting Mode")
+    st.info("Simplified demo.")
+
+st.caption("✅ Correct Dubai time | Safe Hot Movers | Max 5 rows | Signal Time added")
+
+if st.button("Save Current History"):
+    save_history()
+    st.success("History saved!")
