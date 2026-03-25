@@ -5,8 +5,9 @@ import ccxt
 import requests
 import json
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
+from plyer import notification
 from streamlit_autorefresh import st_autorefresh
 import io
 
@@ -24,10 +25,6 @@ if st.session_state.theme == "dark":
 st.title("🚀 Top 300 Early Uptrend Screener + Portfolio Tracker")
 st_autorefresh(interval=60_000, key="data_refresh")
 
-# FIX: Initialize signal_history before reading from file
-if 'signal_history' not in st.session_state:
-    st.session_state.signal_history = []
-
 # ================== SIDEBAR ==================
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -41,28 +38,24 @@ with st.sidebar:
 
 # Exchanges
 spot = ccxt.binance()
-futures_ex = ccxt.binanceusdm()
+futures = ccxt.binanceusdm()
 
 if 'alerted' not in st.session_state:
     st.session_state.alerted = {}
 alerted = st.session_state.alerted
 
-# History — load from file after signal_history is initialized
+# History
 history_file = "signal_history.json"
-if os.path.exists(history_file) and st.session_state.signal_history == []:
+if os.path.exists(history_file):
     with open(history_file, 'r') as f:
         try:
             st.session_state.signal_history = json.load(f)
-        except Exception:
-            st.session_state.signal_history = []
+        except:
+            pass
 
 def save_history():
     with open(history_file, 'w') as f:
         json.dump(st.session_state.signal_history, f)
-
-def get_dubai_time():
-    """Always return correct Dubai time (UTC+4), regardless of server timezone."""
-    return datetime.now(timezone(timedelta(hours=4)))
 
 def get_top_300():
     try:
@@ -72,114 +65,90 @@ def get_top_300():
         }, timeout=10).json()
         df = pd.DataFrame(data)
         return df[df['market_cap_rank'] <= 300]
-    except Exception:
+    except:
         return pd.DataFrame()
 
 def get_futures_momentum(symbol):
     try:
         sym = f"{symbol.upper()}/USDT"
-        funding = futures_ex.fetch_funding_rate(sym)
-        oi = futures_ex.fetch_open_interest(sym)
-        return {
-            "funding_rate": round(funding.get('fundingRate', 0) * 100, 4),
-            "oi": oi.get('openInterestAmount', 0)
-        }
-    except Exception:
+        funding = futures.fetch_funding_rate(sym)
+        oi = futures.fetch_open_interest(sym)
+        return {"funding_rate": round(funding.get('fundingRate', 0) * 100, 4),
+                "oi": oi.get('openInterestAmount', 0)}
+    except:
         return {"funding_rate": 0, "oi": 0}
 
-def get_social_spike(symbol, lunar_key):
-    if not lunar_key:
+def get_social_spike(symbol):
+    if not LUNAR_KEY:
         return "No key"
     try:
-        r = requests.get(
-            f"https://lunarcrush.com/api4/public/coins/{symbol.lower()}/v1?key={lunar_key}",
-            timeout=10
-        )
+        r = requests.get(f"https://lunarcrush.com/api4/public/coins/{symbol.lower()}/v1?key={LUNAR_KEY}")
         data = r.json().get('data', {})
         mentions = data.get('social_volume_24h', 0) or data.get('twitter_mentions_24h', 0)
         galaxy = round(data.get('galaxy_score', 0), 1)
         return f"📣 {mentions:,} | Galaxy {galaxy}"
-    except Exception:
+    except:
         return "API error"
 
-def calculate_pump_score(rvol, ohlcv_df, min_rvol):
+def calculate_pump_score(rvol, df):
     score = 0
-    if rvol >= min_rvol:
-        score += 35
-    if (ohlcv_df['ema9'].iloc[-1] > ohlcv_df['ema21'].iloc[-1] and
-            ohlcv_df['ema9'].iloc[-2] <= ohlcv_df['ema21'].iloc[-2]):
+    if rvol >= MIN_RVOL: score += 35
+    if df['ema9'].iloc[-1] > df['ema21'].iloc[-1] and df['ema9'].iloc[-2] <= df['ema21'].iloc[-2]:
         score += 25
-    if (ohlcv_df['MACD_12_26_9'].iloc[-1] > ohlcv_df['MACDs_12_26_9'].iloc[-1] and
-            ohlcv_df['MACDh_12_26_9'].iloc[-1] > 0):
+    if df['MACD_12_26_9'].iloc[-1] > df['MACDs_12_26_9'].iloc[-1] and df['MACDh_12_26_9'].iloc[-1] > 0:
         score += 20
-    if 50 < ohlcv_df['rsi'].iloc[-1] < 70:
+    if 50 < df['rsi'].iloc[-1] < 70:
         score += 10
     return min(100, score)
 
-def get_1h_pct(row, df_cols):
-    """Safely extract 1h % from a CoinGecko row regardless of column name."""
-    for col in ('price_change_percentage_1h_in_currency', 'price_change_percentage_1h'):
-        if col in df_cols:
-            val = row.get(col, 0)
-            return round(val if val is not None else 0, 2)
-    return 0.0
-
-def scan_coins(min_rvol, max_24h_gain, lunar_key):
+def scan_coins():
     coins = get_top_300()
     if coins.empty:
         return pd.DataFrame(), [], pd.DataFrame()
 
     signals = []
     partials = []
-    coins_cols = list(coins.columns)
 
     for _, coin in coins.iterrows():
         symbol = coin['symbol'].upper()
-        price_change_24h = coin.get('price_change_percentage_24h', 0) or 0
+        price_change_24h = coin.get('price_change_percentage_24h', 0)
 
-        if coin.get('total_volume', 0) < 3_000_000 or price_change_24h > max_24h_gain:
+        if coin.get('total_volume', 0) < 3_000_000 or price_change_24h > MAX_24H_GAIN:
             continue
 
         try:
             ohlcv = spot.fetch_ohlcv(f"{symbol}/USDT", '15m', limit=100)
-            ohlcv_df = pd.DataFrame(ohlcv, columns=['ts', 'open', 'high', 'low', 'close', 'volume'])
+            df = pd.DataFrame(ohlcv, columns=['ts', 'open', 'high', 'low', 'close', 'volume'])
 
-            ohlcv_df['ema9'] = ta.ema(ohlcv_df['close'], 9)
-            ohlcv_df['ema21'] = ta.ema(ohlcv_df['close'], 21)
-            ohlcv_df['rsi'] = ta.rsi(ohlcv_df['close'])
-
-            macd = ta.macd(ohlcv_df['close'])
-            ohlcv_df = pd.concat([ohlcv_df, macd], axis=1)
+            df['ema9'] = ta.ema(df['close'], 9)
+            df['ema21'] = ta.ema(df['close'], 21)
+            df['rsi'] = ta.rsi(df['close'])
+            macd = ta.macd(df['close'])
+            df = pd.concat([df, macd], axis=1)
 
             try:
-                st_df = ta.supertrend(ohlcv_df['high'], ohlcv_df['low'], ohlcv_df['close'])
-                ohlcv_df['supertrend'] = st_df['SUPERT_7_3.0']
-            except Exception:
-                ohlcv_df['supertrend'] = ohlcv_df['close']
+                st_df = ta.supertrend(df['high'], df['low'], df['close'])
+                df['supertrend'] = st_df['SUPERT_7_3.0']
+            except:
+                df['supertrend'] = df['close']
 
-            avg_vol = ohlcv_df['volume'].rolling(20).mean().iloc[-1]
-            rvol = ohlcv_df['volume'].iloc[-1] / avg_vol if avg_vol > 0 else 0
+            avg_vol = df['volume'].rolling(20).mean().iloc[-1]
+            rvol = df['volume'].iloc[-1] / avg_vol if avg_vol > 0 else 0
 
-            ema_cross = (
-                ohlcv_df['ema9'].iloc[-1] > ohlcv_df['ema21'].iloc[-1] and
-                ohlcv_df['ema9'].iloc[-2] <= ohlcv_df['ema21'].iloc[-2]
-            )
-            macd_bull = (
-                ohlcv_df['MACD_12_26_9'].iloc[-1] > ohlcv_df['MACDs_12_26_9'].iloc[-1] and
-                ohlcv_df['MACDh_12_26_9'].iloc[-1] > 0
-            )
+            ema_cross = (df['ema9'].iloc[-1] > df['ema21'].iloc[-1]) and (df['ema9'].iloc[-2] <= df['ema21'].iloc[-2])
+            macd_bull = (df['MACD_12_26_9'].iloc[-1] > df['MACDs_12_26_9'].iloc[-1]) and (df['MACDh_12_26_9'].iloc[-1] > 0)
 
-            if (ema_cross or rvol >= min_rvol) and macd_bull:
-                pump_score = calculate_pump_score(rvol, ohlcv_df, min_rvol)
+            if (ema_cross or rvol >= MIN_RVOL) and macd_bull:
+                pump_score = calculate_pump_score(rvol, df)
                 futures_m = get_futures_momentum(symbol)
-                social = get_social_spike(symbol, lunar_key)
+                social = get_social_spike(symbol)
 
                 signal = {
                     "Coin": symbol,
                     "Rank": int(coin.get('market_cap_rank', 999)),
                     "Price": round(coin.get('current_price', 0), 6),
                     "RVOL": round(rvol, 1),
-                    "1h %": get_1h_pct(coin, coins_cols),
+                    "1h %": round(coin.get('price_change_percentage_1h', 0), 2),
                     "24h %": round(price_change_24h, 2),
                     "Pump Score": pump_score,
                     "Funding Rate": futures_m['funding_rate'],
@@ -188,11 +157,12 @@ def scan_coins(min_rvol, max_24h_gain, lunar_key):
                 }
                 signals.append(signal)
 
+            # Partial Signals
             partial_score = 0
             reasons = []
             if rvol >= 1.3:
                 partial_score += 2
-                reasons.append(f"RVOL {round(rvol, 1)}x")
+                reasons.append(f"RVOL {round(rvol,1)}x")
             if macd_bull:
                 partial_score += 1
                 reasons.append("MACD Bull")
@@ -200,19 +170,19 @@ def scan_coins(min_rvol, max_24h_gain, lunar_key):
                 partial_score += 1
                 reasons.append("EMA Cross")
 
-            if partial_score >= 1 and price_change_24h < max_24h_gain + 20:
+            if partial_score >= 1 and price_change_24h < MAX_24H_GAIN + 20:
                 partials.append({
                     "Coin": symbol,
                     "Rank": int(coin.get('market_cap_rank', 999)),
                     "RVOL": round(rvol, 1),
-                    "1h %": get_1h_pct(coin, coins_cols),
+                    "1h %": round(coin.get('price_change_percentage_1h', 0), 2),
                     "24h %": round(price_change_24h, 2),
                     "Partial Score": partial_score,
                     "Reasons": ", ".join(reasons),
                     "Link": f"https://www.coingecko.com/en/coins/{coin['id']}"
                 })
 
-        except Exception:
+        except:
             continue
 
     df_signals = pd.DataFrame(signals)
@@ -229,61 +199,51 @@ def scan_coins(min_rvol, max_24h_gain, lunar_key):
 tab1, tab2, tab3, tab4 = st.tabs(["📡 Live Scanner", "💼 Portfolio Tracker", "📜 History", "📊 Backtesting"])
 
 with tab1:
-    # Always use explicit UTC+4 offset — never rely on server's local timezone
-    dubai_now = get_dubai_time()
+    dubai_tz = datetime.now(ZoneInfo("Asia/Dubai"))
 
     st.subheader("Live Early Pump Signals (Auto-refresh every 1 min)")
-    st.caption(
-        f"🕒 Last scan: {dubai_now.strftime('%Y-%m-%d %H:%M:%S')} **Dubai time (UTC+4)** | "
-        f"Min RVOL: {MIN_RVOL} | Max 24h: {MAX_24H_GAIN}%"
-    )
+    st.caption(f"🕒 Last scan: {dubai_tz.strftime('%Y-%m-%d %H:%M:%S')} **Dubai time** | "
+               f"Min RVOL: {MIN_RVOL} | Max 24h: {MAX_24H_GAIN}%")
 
     with st.spinner("Scanning top 300 coins..."):
-        df_signals, top5, df_partials = scan_coins(MIN_RVOL, MAX_24H_GAIN, LUNAR_KEY)
+        df_signals, top5, df_partials = scan_coins()
 
+    # Live Strong Signals
     st.subheader("🚀 Live Strong Signals (Max 5)")
     if not df_signals.empty:
         live_display = df_signals.head(5).copy()
-        live_display['Detected (Dubai)'] = dubai_now.strftime('%H:%M:%S')
+        live_display['Detected (Dubai)'] = dubai_tz.strftime('%H:%M:%S')
         st.dataframe(live_display, use_container_width=True, hide_index=True,
                      column_config={"Link": st.column_config.LinkColumn("Link")})
     else:
         st.info("No full strong signals right now")
 
+    # Partial Signals
     st.subheader("🔍 Partial / Near-Miss Signals (Max 5)")
     if not df_partials.empty:
         partial_display = df_partials.head(5).copy()
-        partial_display['Detected (Dubai)'] = dubai_now.strftime('%H:%M:%S')
+        partial_display['Detected (Dubai)'] = dubai_tz.strftime('%H:%M:%S')
         st.dataframe(partial_display, use_container_width=True, hide_index=True,
                      column_config={"Link": st.column_config.LinkColumn("Link")})
     else:
         st.info("No near-misses detected this scan")
 
+    # Hot Movers - SAFE VERSION
     st.subheader("🔥 Hot Movers Watchlist (Top 5 by 24h %)")
-    coins_df = get_top_300()
-    if not coins_df.empty:
-        hot = coins_df.sort_values('price_change_percentage_24h', ascending=False).head(5).copy()
-        hot_cols = list(hot.columns)
-
-        # Safely pick whichever 1h column CoinGecko returned — never assume
-        one_h_col = next(
-            (c for c in ('price_change_percentage_1h_in_currency', 'price_change_percentage_1h')
-             if c in hot_cols),
-            None
-        )
-        one_h_values = hot[one_h_col].fillna(0).round(2).values if one_h_col else [0.0] * len(hot)
-
+    coins = get_top_300()
+    if not coins.empty:
+        hot = coins.sort_values('price_change_percentage_24h', ascending=False).head(5).copy()
+        
         display_hot = pd.DataFrame({
-            "Coin": hot["symbol"].str.upper().values,
-            "Price ($)": hot["current_price"].round(6).values,
-            "1h %": one_h_values,
-            "24h %": hot["price_change_percentage_24h"].round(2).values,
-            "24h Volume": hot["total_volume"].apply(
-                lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A"
-            ).values,
-            "Detected (Dubai)": dubai_now.strftime("%H:%M:%S")
+            "Coin": hot["symbol"].str.upper(),
+            "Price ($)": hot["current_price"].round(6),
+            "1h %": hot.get("price_change_percentage_1h", 
+                           hot.get("price_change_percentage_1h_in_currency", 0.0)).round(2),
+            "24h %": hot["price_change_percentage_24h"].round(2),
+            "24h Volume": hot["total_volume"].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A"),
+            "Detected (Dubai)": dubai_tz.strftime("%H:%M:%S")
         })
-
+        
         st.dataframe(display_hot, use_container_width=True, hide_index=True)
         st.caption("Top 5 hottest movers right now")
     else:
@@ -308,7 +268,7 @@ with tab4:
     st.subheader("📊 Backtesting Mode")
     st.info("Simplified demo.")
 
-st.caption("✅ Correct Dubai time (UTC+4 fixed) | Safe Hot Movers | Max 5 rows | Signal Time added")
+st.caption("✅ Correct Dubai time | Safe Hot Movers | Max 5 rows | Signal Time added")
 
 if st.button("Save Current History"):
     save_history()
