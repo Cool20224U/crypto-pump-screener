@@ -228,7 +228,7 @@ with tab1:
     else:
         st.info("No near-misses detected this scan")
 
-    # Hot Movers - SAFE VERSION
+    # Hot Movers - Ultra Safe
     st.subheader("🔥 Hot Movers Watchlist (Top 5 by 24h %)")
     coins = get_top_300()
     if not coins.empty:
